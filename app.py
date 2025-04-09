@@ -212,6 +212,9 @@ app_ui = ui.page_fluid(
             .main-content {
                 padding: 15px;
             }
+            .main-content > .shiny-plot-output {
+                margin-bottom: 30px;
+            }
             """
         )
     ),
