@@ -241,6 +241,13 @@ app_ui = ui.page_fluid(
             .main-content > .shiny-plot-output {
                 margin-bottom: 30px;
             }
+            /* Add this to your existing CSS */
+            .location-info {
+                margin-top: -10px;
+                margin-bottom: 15px;
+                font-style: italic;
+                color: #666;
+            }
             """
         )
     ),
@@ -256,6 +263,11 @@ app_ui = ui.page_fluid(
             {"class": "sidebar"},
             ui.h3("Input Parameters"),
             ui.input_select("zipcode", "Select ZIP Code:", get_unique_zip_codes()),
+            # Wrap the output_text in a div with the class we want
+            ui.div(
+                {"class": "location-info"},
+                ui.output_text("location_info")
+            ),
             ui.input_select("target_month", "Select Month to Predict:", generate_month_options()),
             ui.input_checkbox("adjust_for_warming", "Adjust for global warming (1% per year)", value=False),
             ui.input_action_button("submit", "Generate Forecast", class_="btn-primary"),
@@ -435,6 +447,29 @@ def server(input, output, session):
         display_data = display_data.fillna("Data Not Available")
         
         return display_data
+
+    @output
+    @render.text
+    def location_info():
+        zipcode = input.zipcode()
+        if not zipcode:
+            return ""
+        
+        # Find the city and state for this ZIP code
+        location_data = df[df["Station Zip"] == zipcode]
+        if location_data.empty:
+            return ""
+        
+        # Get the first matching row (there could be multiple entries for the same ZIP)
+        first_match = location_data.iloc[0]
+        
+        # Check if City and ST columns exist
+        if "City" in location_data.columns and "ST" in location_data.columns:
+            city = first_match["City"]
+            state = first_match["ST"]
+            return f"{city}, {state}"
+        
+        return ""
 
 # Create and run the app
 app = App(app_ui, server)
