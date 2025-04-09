@@ -97,7 +97,7 @@ Your `HDD Raw Data.xlsx` file must contain a worksheet named **`background`** wi
 
 ---
 
-## Publish
+## 🚀 Publish
 
 - Published to https://cmead.shinyapps.io/cmeadhackathon/
 - rsconnect deploy shiny . --name cmead --title cmeadHackathon
