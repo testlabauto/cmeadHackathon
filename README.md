@@ -17,11 +17,12 @@ It supports:
 
 ## 🚀 Features
 
-- 🔎 **ZIP Code Lookup**: Select from available ZIPs in your dataset.
-- 📆 **Target Month Selection**: Choose a month to forecast HDDs.
-- 🤖 **AI-Powered Estimation**: GPT-4o uses recent HDD history to generate a forecast and explain its reasoning.
-- 📊 **Line Plot**: Visualizes historical HDDs with your forecast highlighted.
-- 📋 **Table**: Tabular display of historical values (last 36 months).
+- 📍 Select a ZIP code from the historical dataset  
+- 📅 Choose a future month to forecast  
+- 📈 Visualize 5 years of historical HDD data  
+- 🤖 Get an AI-powered forecast for next month's HDDs using OpenAI GPT-4o  
+- 🌡️ Optional checkbox to adjust predictions for global warming (1% reduction per year)  
+- 🧠 Extracts AI predictions using structured format `{PREDICTION: X}`  
 
 ---
 

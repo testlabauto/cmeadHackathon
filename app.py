@@ -78,24 +78,50 @@ tools = [
 ]
 
 # Get prediction for specified month
-def call_openai(zipcode: str, target_date):
+def call_openai(zipcode: str, target_date, adjust_for_warming=False):
     # Format the target date
     target_month_name = target_date.strftime("%B %Y")
     today = datetime.now()
     
-    user_prompt = (
+    # Base prompt
+    base_prompt = (
         f"Today is {today.strftime('%B %d, %Y')}. Please estimate the HDDs for {target_month_name} in ZIP code {zipcode} "
         f"using the historical data provided. Analyze seasonal patterns and trends in the data."
+    )
+    
+    # Add global warming adjustment instruction if requested
+    if adjust_for_warming:
+        # Calculate years from now to target date
+        years_forward = (target_date.year - today.year) + (target_date.month - today.month) / 12
+        
+        warming_prompt = (
+            f"\n\nIMPORTANT: Adjust your estimate to account for global warming effects. "
+            f"Assume a warming trend of approximately 1% fewer HDDs per year relative to historical averages. "
+            f"Since you're predicting {years_forward:.1f} years into the future, "
+            f"reduce your baseline estimate by approximately {years_forward:.1f}% to account for this warming trend."
+        )
+        base_prompt += warming_prompt
+    
+    # Add the structured output format instruction
+    format_instruction = (
         f"\n\nAfter your analysis, end your response with a clear numerical prediction in this exact format:"
         f"\n\n{{PREDICTION: X}} where X is your single numeric estimate for {target_month_name}'s HDD value."
         f"\n\nFor example: {{PREDICTION: 123}} if you predict 123 HDDs."
     )
-
+    
+    user_prompt = base_prompt + format_instruction
+    
+    # Create system message with conditional instruction
+    system_message = f"Today is {today.strftime('%B %d, %Y')}. You are helping estimate heating degree days for {target_month_name}."
+    if adjust_for_warming:
+        system_message += " Include global warming effects (1% reduction per year) in your estimate."
+    system_message += " Always end your response with {PREDICTION: X} where X is your numerical estimate."
+    
     # Step 1: Ask the model what tool it wants to use
     chat = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": f"Today is {today.strftime('%B %d, %Y')}. You are helping estimate heating degree days for {target_month_name}. Always end your response with {{PREDICTION: X}} where X is your numerical estimate."},
+            {"role": "system", "content": system_message},
             {"role": "user", "content": user_prompt}
         ],
         tools=tools,
@@ -229,8 +255,9 @@ app_ui = ui.page_fluid(
         ui.column(3, 
             {"class": "sidebar"},
             ui.h3("Input Parameters"),
-            ui.input_select("zipcode", "Select ZIP Code:", get_unique_zip_codes()),  # Changed to dropdown
+            ui.input_select("zipcode", "Select ZIP Code:", get_unique_zip_codes()),
             ui.input_select("target_month", "Select Month to Predict:", generate_month_options()),
+            ui.input_checkbox("adjust_for_warming", "Adjust for global warming (1% per year)", value=False),
             ui.input_action_button("submit", "Generate Forecast", class_="btn-primary"),
             ui.hr(),
             ui.div(
@@ -283,8 +310,11 @@ def server(input, output, session):
         target_month_str = input.target_month()
         target_date = datetime.strptime(target_month_str, "%Y-%m-%d")
         
-        # Get prediction from OpenAI
-        prediction_text, target_date, raw_data = call_openai(zipcode, target_date)
+        # Get checkbox value
+        adjust_for_warming = input.adjust_for_warming()
+        
+        # Get prediction from OpenAI with global warming adjustment if requested
+        prediction_text, target_date, raw_data = call_openai(zipcode, target_date, adjust_for_warming)
         predicted_hdd = extract_hdd_value(prediction_text)
         
         # Update reactive values
@@ -293,14 +323,16 @@ def server(input, output, session):
             "value": predicted_hdd,
             "date": target_date,
             "raw_data": raw_data if raw_data else "No data available",
-            "zipcode": zipcode
+            "zipcode": zipcode,
+            "warming_adjusted": adjust_for_warming
         })
     
     @output
     @render.text
     def prediction_month():
         if prediction_data().get("date"):
-            return f"Forecast for: {prediction_data()['date'].strftime('%B %Y')}"
+            warming_text = " (warming-adjusted)" if prediction_data().get("warming_adjusted") else ""
+            return f"Forecast for: {prediction_data()['date'].strftime('%B %Y')}{warming_text}"
         return "No prediction yet. Select a ZIP code and month, then click 'Generate Forecast'."
     
     @output
