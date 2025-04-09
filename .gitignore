@@ -1,3 +1,4 @@
 .env
 .posit/*
 rsconnect-python/*
+.DS_Store

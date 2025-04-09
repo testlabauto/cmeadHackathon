@@ -84,16 +84,18 @@ def call_openai(zipcode: str, target_date):
     today = datetime.now()
     
     user_prompt = (
-        f"Today is {today.strftime('%B %d, %Y')}. Can you estimate the HDDs for {target_month_name} in ZIP code {zipcode}? "
-        f"You can use historical data to guide your answer. Please give a single numerical estimate for {target_month_name}'s HDD value "
-        f"based on seasonal patterns and historical data for this location."
+        f"Today is {today.strftime('%B %d, %Y')}. Please estimate the HDDs for {target_month_name} in ZIP code {zipcode} "
+        f"using the historical data provided. Analyze seasonal patterns and trends in the data."
+        f"\n\nAfter your analysis, end your response with a clear numerical prediction in this exact format:"
+        f"\n\n{{PREDICTION: X}} where X is your single numeric estimate for {target_month_name}'s HDD value."
+        f"\n\nFor example: {{PREDICTION: 123}} if you predict 123 HDDs."
     )
 
     # Step 1: Ask the model what tool it wants to use
     chat = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": f"Today is {today.strftime('%B %d, %Y')}. You are helping estimate heating degree days for {target_month_name}."},
+            {"role": "system", "content": f"Today is {today.strftime('%B %d, %Y')}. You are helping estimate heating degree days for {target_month_name}. Always end your response with {{PREDICTION: X}} where X is your numerical estimate."},
             {"role": "user", "content": user_prompt}
         ],
         tools=tools,
@@ -136,7 +138,18 @@ def call_openai(zipcode: str, target_date):
 
 # Extract numeric value from OpenAI's response
 def extract_hdd_value(response_text):
-    # Try to find a numeric value in the response
+    """
+    Extract HDD prediction value from model response with preference for structured format.
+    """
+    # Strategy 1: Look for the structured format we requested
+    structured_pattern = r"\{PREDICTION:\s*(\d+)\}"
+    structured_match = re.search(structured_pattern, response_text)
+    if structured_match:
+        value = int(structured_match.group(1))
+        if 0 <= value <= 1500:  # Sanity check for reasonable range
+            return value
+    
+    # Strategy 2: Fallback to looking for numbers in reasonable range
     numbers = re.findall(r'\b\d+\b', response_text)
     
     if numbers:
