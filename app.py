@@ -45,14 +45,29 @@ def get_unique_zip_codes():
     
     return zip_dict
 
-# Tool function to query HDD data
-def get_hdd_by_zip(zipcode: str) -> str:
-    # Ensure the zipcode is padded to match data format
+# Tool function to query HDD data - update this function
+def get_hdd_by_zip(zipcode: str, session=None) -> str:
+    # Signal that the function is being called if session is provided
+    if session:
+        try:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                # Create a more visible notification with console logging
+                print(f"DEBUG: Sending notification for ZIP {zipcode}")
+                session.send_custom_message("notification", {
+                    "text": f"⚙️ Fetching historical HDD data for ZIP {zipcode}...",
+                })
+        except Exception as e:
+            print(f"ERROR showing indicator: {e}")
+    else:
+        print("DEBUG: Session not available for notification")
+    
+    # Rest of function remains the same
     zipcode = zipcode.zfill(5)
     filtered = df[df["Station Zip"] == zipcode]
     if filtered.empty:
         return f"No data found for ZIP code {zipcode}."
-    # Change from 12 months to 60 months (5 years)
     latest = filtered.sort_values("Month End").tail(60)[["Month End", "HDDs"]]
     return latest.to_string(index=False)
 
@@ -78,7 +93,8 @@ tools = [
 ]
 
 # Get prediction for specified month
-def call_openai(zipcode: str, target_date, adjust_for_warming=False):
+# Then modify the call_openai function to pass the session
+def call_openai(zipcode: str, target_date, adjust_for_warming=False, session=None):
     # Format the target date
     target_month_name = target_date.strftime("%B %Y")
     today = datetime.now()
@@ -137,7 +153,13 @@ def call_openai(zipcode: str, target_date, adjust_for_warming=False):
         try:
             args = json.loads(tool_call.function.arguments)
             zip_arg = args.get("zipcode")
-            tool_output = get_hdd_by_zip(zip_arg)
+            
+            # Make sure we're using the zipcode selected in the UI
+            # This ensures the notification shows the correct zipcode
+            print(f"Tool requested ZIP: {zip_arg}, Using UI ZIP: {zipcode}")
+            
+            # Pass the session to get_hdd_by_zip with the UI-selected zipcode
+            tool_output = get_hdd_by_zip(zipcode, session)
 
             # Step 3: Send tool response back to OpenAI
             second_chat = client.chat.completions.create(
@@ -206,6 +228,67 @@ def generate_month_options():
 # Create Shiny app UI
 app_ui = ui.page_fluid(
     ui.tags.head(
+        # Initialize JavaScript handlers
+        ui.tags.script("""
+        $(document).ready(function() {
+            console.log("Setting up notification handler");
+            
+            // Add the notification handler directly in the initial page load
+            Shiny.addCustomMessageHandler('notification', function(data) {
+                console.log("Notification received:", data);
+                
+                // Remove any existing notifications
+                $(".custom-notification").remove();
+                
+                // Create a simple notification
+                var notification = document.createElement('div');
+                notification.className = 'custom-notification';
+                notification.style.position = 'fixed';
+                notification.style.top = '50px';
+                notification.style.left = '50%';
+                notification.style.transform = 'translateX(-50%)';
+                notification.style.backgroundColor = 'rgba(76, 175, 80, 0.9)';
+                notification.style.color = 'white';
+                notification.style.padding = '15px 20px';
+                notification.style.borderRadius = '5px';
+                notification.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)';
+                notification.style.zIndex = '100000';
+                notification.style.fontSize = '16px';
+                notification.style.fontWeight = 'bold';
+                notification.textContent = data.text;
+                
+                document.body.appendChild(notification);
+                
+                // Log to console for debugging
+                console.log("Notification shown:", data.text);
+                
+                // Remove after 3 seconds
+                setTimeout(function() {
+                    notification.style.opacity = '0';
+                    notification.style.transition = 'opacity 0.5s';
+                    setTimeout(function() {
+                        if (notification.parentNode) {
+                            notification.parentNode.removeChild(notification);
+                        }
+                    }, 500);
+                }, 3000);
+            });
+            
+            // Your existing js_init handler
+            Shiny.addCustomMessageHandler('js_init', function(message) {
+                eval(message.code);
+            });
+            
+            // Also add the API call handler here
+            Shiny.addCustomMessageHandler('api_call', function(data) {
+                Shiny.setInputValue('api_call_trigger', data);
+                // Set a timeout to clear the indicator
+                setTimeout(function() {
+                    Shiny.setInputValue('api_call_reset', Math.random());
+                }, 3000); // 3 seconds
+            });
+        });
+        """),
         ui.tags.style(
             """
             .app-header {
@@ -247,6 +330,23 @@ app_ui = ui.page_fluid(
                 margin-bottom: 15px;
                 font-style: italic;
                 color: #666;
+            }
+            .api-indicator {
+                position: fixed;
+                top: 10px;
+                right: 10px;
+                background-color: #4CAF50;
+                color: white;
+                padding: 10px 15px;
+                border-radius: 5px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                z-index: 1000;
+                animation: fadeIn 0.3s ease;
+            }
+
+            @keyframes fadeIn {
+                from { opacity: 0; }
+                to { opacity: 1; }
             }
             """
         )
@@ -296,40 +396,45 @@ app_ui = ui.page_fluid(
                 )
             )
         )
-    )
+    ),
+    ui.output_ui("api_indicator"),
 )
 
 # Server logic
 def server(input, output, session):
-    # Store results in reactive values
+    api_status = reactive.Value({"active": False, "message": ""})
     prediction_data = reactive.Value({
         "text": "",
         "value": None,
         "date": None,
         "raw_data": "",
-        "zipcode": ""
+        "zipcode": "",
+        "warming_adjusted": False
     })
-    
+
     @reactive.Effect
     @reactive.event(input.submit)
-    def _():
-        # Get the selected ZIP code
+    async def _():  # Make the reactive effect async
         zipcode = input.zipcode()
         if not zipcode:
             return
-        
-        # Get the selected month
+
         target_month_str = input.target_month()
         target_date = datetime.strptime(target_month_str, "%Y-%m-%d")
-        
-        # Get checkbox value
         adjust_for_warming = input.adjust_for_warming()
-        
-        # Get prediction from OpenAI with global warming adjustment if requested
-        prediction_text, target_date, raw_data = call_openai(zipcode, target_date, adjust_for_warming)
+
+        # Set the API status and manually send the indicator first
+        message = f"⚙️ Fetching historical HDD data for ZIP {zipcode}..."
+        api_status.set({"active": True, "message": message})
+        await session.send_custom_message("notification", {"text": message})  # Await the call
+
+        # Now do the blocking call
+        prediction_text, target_date, raw_data = call_openai(zipcode, target_date, adjust_for_warming, session)
         predicted_hdd = extract_hdd_value(prediction_text)
-        
-        # Update reactive values
+
+        # Reset the API status
+        api_status.set({"active": False, "message": ""})
+
         prediction_data.set({
             "text": prediction_text,
             "value": predicted_hdd,
@@ -338,6 +443,20 @@ def server(input, output, session):
             "zipcode": zipcode,
             "warming_adjusted": adjust_for_warming
         })
+
+    @output
+    @render.ui
+    def api_indicator():
+        if api_status()["active"]:
+            return ui.div(
+                {"class": "api-indicator"},
+                api_status()["message"]
+            )
+        else:
+            return ui.tags.div() # Return an empty div when not active
+
+    # The rest of your server logic remains the same
+    # ...
     
     @output
     @render.text
